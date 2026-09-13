@@ -4,9 +4,15 @@ cd "$(dirname "$0")"
 source .env
 mkdir -p data/open-webui
 
-# Restoring a snapshot creates a new instance with a new ID, which changes the public URL.
-INSTANCE_ID=$(python3 -c "import json; print(json.load(open('/etc/thunder/config.json'))['deviceId'])")
-PUBLIC_URL="https://${INSTANCE_ID}-3000.thundercompute.net"
+# PUBLIC_DOMAIN (set in .env) fronts this with a stable domain via Cloudflare Tunnel —
+# see start-cloudflared.sh. Without it, restoring a snapshot creates a new instance with
+# a new ID, which changes the public URL.
+if [ -n "${PUBLIC_DOMAIN:-}" ]; then
+  PUBLIC_URL="https://${PUBLIC_DOMAIN}"
+else
+  INSTANCE_ID=$(python3 -c "import json; print(json.load(open('/etc/thunder/config.json'))['deviceId'])")
+  PUBLIC_URL="https://${INSTANCE_ID}-3000.thundercompute.net"
+fi
 
 docker rm -f open-webui 2>/dev/null || true
 

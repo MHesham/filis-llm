@@ -5,7 +5,7 @@ Self-hosted **Qwen3.8-27B** (INT4 weights by default, FP8 available) served by *
 - **Public chat URL:** `https://<instance-id>-3000.thundercompute.net` (`start-all.sh` prints the current one)
 - **Model name in APIs:** `qwen3.8-27b`
 
-> The instance ID, and therefore the URL, changes every time the machine is restored from a snapshot. `start-webui.sh` works it out automatically.
+> The instance ID, and therefore the URL, changes every time the machine is restored from a snapshot. `start-webui.sh` works it out automatically. Set `PUBLIC_DOMAIN` in `.env` to front this with your own domain instead — see [Custom domain (Cloudflare Tunnel)](#custom-domain-cloudflare-tunnel).
 
 ---
 
@@ -42,7 +42,8 @@ Self-hosted **Qwen3.8-27B** (INT4 weights by default, FP8 available) served by *
 |---|---|
 | `start-all.sh` | Starts vLLM and Open WebUI, waits for the model, prints the public URL. **Use this after a restore.** |
 | `start-vllm.sh` | (Re)creates the `vllm` container. Pick the model with `MODEL=`. |
-| `start-webui.sh` | (Re)creates the `open-webui` container with the current instance's public URL. |
+| `start-webui.sh` | (Re)creates the `open-webui` container with the current instance's public URL, or `PUBLIC_DOMAIN` if set. |
+| `start-cloudflared.sh` | Optional: fronts Open WebUI with `PUBLIC_DOMAIN` via Cloudflare Tunnel. |
 | `.env.example` | Template for `.env`. |
 | `.gitignore` | Keeps secrets, the Open WebUI database, and model weights out of Git. |
 | `MEMORY.md` | Gotchas and lessons learned. Read before changing anything. |
@@ -127,7 +128,8 @@ Tool calling is verified on every route below, including streamed tool calls.
 1. Admin: **Admin Panel → Settings → General → enable API Keys** (off by default).
 2. Each user: **Settings → Account → API Keys → create key**.
 3. Point any OpenAI-compatible client at:
-   - Base URL: `https://<instance-id>-3000.thundercompute.net/api` (`/api/v1` also works)
+   - Base URL: `https://<your-domain>/api` (`/api/v1` also works) — your `PUBLIC_DOMAIN`
+     from `.env` if set, otherwise the `<instance-id>-3000.thundercompute.net` URL
    - API key: the user's Open WebUI key
    - Model: `qwen3.8-27b`
 
@@ -154,7 +156,7 @@ npm install -g @qwen-code/qwen-code@latest    # Node.js 22+
   "modelProviders": {
     "openai": [
       { "id": "qwen3.8-27b", "name": "Self-hosted Qwen3.8-27B",
-        "baseUrl": "https://<instance-id>-3000.thundercompute.net/api/v1",
+        "baseUrl": "https://<your-domain>/api/v1",
         "envKey": "OPENAI_API_KEY" }
     ]
   },
@@ -207,6 +209,60 @@ Current setup: **NVIDIA L40 with the INT4 weights**. Test: ~440-token prompt, 30
 
 ---
 
+## Custom domain (Cloudflare Tunnel)
+
+Front Open WebUI with your own domain (e.g. `chat.example.com`) instead of the
+infra-assigned `*.thundercompute.net` URL. `cloudflared` makes an outbound-only
+connection to Cloudflare's edge, so this needs no inbound port-forwarding, and it
+keeps working across snapshot restores since the tunnel's identity lives in a token
+file on disk, not in the instance's changing device ID.
+
+> **Runs as a native package + SysV service, not Docker.** This instance's container
+> runtime (`fastvfs` storage driver, via `proot`) fails to materialize the
+> `cloudflare/cloudflared` image (`proot warning: can't sanitize binding ...:
+> Permission denied`) — reproduced across multiple image tags, so it's a platform
+> limitation, not a bad flag. There's also no systemd here (`system has not been
+> booted with systemd as init system`), so `cloudflared service install` falls back
+> to a classic `/etc/init.d` script, managed with `service`, not `systemctl`.
+
+Dashboard setup (your domain must already be on Cloudflare):
+
+1. **Zero Trust > Networks > Tunnels > Create a tunnel** (Cloudflared connector). Name it
+   anything — it's just a label, not part of the public URL.
+2. On the **Install and run a connector** step, pick **Debian** and copy just the token
+   (the string after `--token` in the command shown — don't run that command as-is).
+3. On the tunnel's **Public Hostname** tab, add: your domain/subdomain → Service Type
+   `HTTP` → URL `localhost:3000`. Cloudflare auto-creates the DNS record for you.
+
+On the instance:
+
+```bash
+# In .env:
+PUBLIC_DOMAIN=chat.example.com
+CLOUDFLARE_TUNNEL_TOKEN=<the token from step 2>
+
+# One-time install + registration:
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared jammy main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt-get update && sudo apt-get install -y cloudflared
+source .env && sudo cloudflared service install "$CLOUDFLARE_TUNNEL_TOKEN"
+
+# Then, same as vLLM/Open WebUI:
+./start-webui.sh   # picks up PUBLIC_DOMAIN for WEBUI_URL/CORS_ALLOW_ORIGIN
+```
+
+`start-cloudflared.sh` (called automatically by `start-all.sh` when
+`CLOUDFLARE_TUNNEL_TOKEN` is set) just runs `sudo service cloudflared start` — the
+one-time `apt-get install` + `service install` above only needs to happen once per
+instance, since the package and `/etc/cloudflared/token` persist on disk across
+reboots and snapshot restores.
+
+Once this is live, note that Cloudflare's edge — not just Thunder Compute's — sits in
+the plaintext path (it terminates TLS to route the request); see `PRIVACY.md` if
+you're maintaining privacy claims about this deployment.
+
+---
+
 ## Snapshots and restoring
 
 Thunder has no stop/start. To pause and save money:
@@ -217,7 +273,9 @@ Thunder has no stop/start. To pause and save money:
 
 After the restore:
 
-- **The instance ID and public URL change.** Share the new URL with users.
+- **The instance ID and public URL change** — unless you've set `PUBLIC_DOMAIN`
+  (see [Custom domain](#custom-domain-cloudflare-tunnel)), in which case the domain
+  stays the same and there's nothing to share. Otherwise, share the new URL with users.
 - **Both containers start automatically, but Open WebUI keeps the *old* URL setting.** Run:
   ```bash
   cd ~/qwen-platform && ./start-webui.sh      # or ./start-all.sh
