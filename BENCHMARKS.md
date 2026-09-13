@@ -32,7 +32,8 @@ Identical for all runs:
 Reproduce from the repo root (pick the model with `MODEL`, restart, wait until ready, then):
 
 ```bash
-MODEL=Qwen3.8-27B-W4A16-AutoRound ./start-vllm.sh     # or no MODEL for FP8
+./start-vllm.sh                          # INT4 (the default)
+MODEL=Qwen3.8-27B-FP8 ./start-vllm.sh    # or FP8
 set -a; source .env; set +a
 python3 benchmarks/loadtest.py 1 2 4 8 16 24
 ```

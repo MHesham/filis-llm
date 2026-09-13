@@ -1,6 +1,6 @@
 # Qwen Platform
 
-Self-hosted **Qwen3.8-27B-FP8** served by **vLLM**, with **Open WebUI** as the multi-user chat front end, running on a Thunder Compute GPU instance.
+Self-hosted **Qwen3.8-27B** (INT4 weights by default, FP8 available) served by **vLLM**, with **Open WebUI** as the multi-user chat front end, running on a Thunder Compute GPU instance.
 
 - **Public chat URL:** `https://<instance-id>-3000.thundercompute.net` (`start-all.sh` prints the current one)
 - **Model name in APIs:** `qwen3.8-27b`
@@ -17,7 +17,7 @@ Self-hosted **Qwen3.8-27B-FP8** served by **vLLM**, with **Open WebUI** as the m
             ▼
  ┌─────────────────────────┐        ┌──────────────────────────────┐
  │ Open WebUI  :3000       │ ─────▶ │ vLLM  127.0.0.1:8000         │
- │ accounts, chats, API    │  key   │ Qwen3.8-27B-FP8 on L40       │
+ │ accounts, chats, API    │  key   │ Qwen3.8-27B INT4 on L40      │
  └─────────────────────────┘        └──────────────────────────────┘
 ```
 
@@ -28,10 +28,11 @@ Self-hosted **Qwen3.8-27B-FP8** served by **vLLM**, with **Open WebUI** as the m
 |---|---|
 | GPU | 1× NVIDIA L40, 46GB (Ada Lovelace). Previously RTX A6000; see `BENCHMARKS.md` |
 | Host | Thunder Compute instance, 250GB disk |
-| Model | `Qwen/Qwen3.8-27B-FP8`, 28.9GB on GPU, vision + tools + thinking |
+| Model (default) | `dbirks/Qwen3.8-27B-W4A16-AutoRound`, INT4 weights, 17.7GB on GPU, vision + tools + thinking |
+| Model (fallback) | `Qwen/Qwen3.8-27B-FP8`, 28.9GB on GPU; slower on this GPU but slightly closer to the original model |
 | Inference server | `vllm/vllm-openai:latest` (v0.29.0) |
 | Chat UI | `ghcr.io/open-webui/open-webui:main` (v0.11.3 at setup) |
-| Context window | 131,072 tokens per request; ~150–200K tokens of conversation memory shared across users |
+| Context window | 131,072 tokens per request; ~329K tokens of conversation memory shared across users (INT4 on the L40) |
 
 ---
 
@@ -40,7 +41,7 @@ Self-hosted **Qwen3.8-27B-FP8** served by **vLLM**, with **Open WebUI** as the m
 | Path | Purpose |
 |---|---|
 | `start-all.sh` | Starts vLLM and Open WebUI, waits for the model, prints the public URL. **Use this after a restore.** |
-| `start-vllm.sh` | (Re)creates the `vllm` container. |
+| `start-vllm.sh` | (Re)creates the `vllm` container. Pick the model with `MODEL=`. |
 | `start-webui.sh` | (Re)creates the `open-webui` container with the current instance's public URL. |
 | `.env.example` | Template for `.env`. |
 | `.gitignore` | Keeps secrets, the Open WebUI database, and model weights out of Git. |
@@ -55,8 +56,8 @@ Local-only (not in Git):
 | `.env` | Secrets: `VLLM_API_KEY`, `WEBUI_SECRET_KEY`. Mode 600. **Never commit or share.** |
 | `admin-credentials.txt` | Optional note of the Open WebUI admin login. Mode 600. |
 | `data/open-webui/` | Open WebUI database: users, chats, settings. Back this up. |
-| `/home/ubuntu/models/Qwen3.8-27B-FP8/` | FP8 model weights (28GB), the default. |
-| `/home/ubuntu/models/Qwen3.8-27B-W4A16-AutoRound/` | INT4 model weights (19GB). Select with `MODEL=`. |
+| `/home/ubuntu/models/Qwen3.8-27B-W4A16-AutoRound/` | INT4 model weights (19GB), the default. |
+| `/home/ubuntu/models/Qwen3.8-27B-FP8/` | FP8 model weights (28GB), kept for rollback. Select with `MODEL=Qwen3.8-27B-FP8`. |
 
 ---
 
@@ -72,11 +73,13 @@ cd ~/qwen-platform
 umask 077 && printf 'VLLM_API_KEY=%s\nWEBUI_SECRET_KEY=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
 
-# 2. Model weights (~28GB)
+# 2. Model weights: INT4, the default (~19GB)
 pip install --user -U "huggingface_hub[hf_xet]"
-~/.local/bin/hf download Qwen/Qwen3.8-27B-FP8 --local-dir /home/ubuntu/models/Qwen3.8-27B-FP8
+~/.local/bin/hf download dbirks/Qwen3.8-27B-W4A16-AutoRound --local-dir /home/ubuntu/models/Qwen3.8-27B-W4A16-AutoRound
+#    Optional FP8 fallback (~28GB):
+#    ~/.local/bin/hf download Qwen/Qwen3.8-27B-FP8 --local-dir /home/ubuntu/models/Qwen3.8-27B-FP8
 
-# 3. Start everything (first start takes ~11–13 min)
+# 3. Start everything (first start takes ~9–13 min)
 ./start-all.sh
 ```
 
@@ -90,8 +93,8 @@ pip install --user -U "huggingface_hub[hf_xet]"
 cd ~/qwen-platform
 
 ./start-all.sh            # start or restart everything and wait until ready
-./start-vllm.sh           # restart only the model server with FP8 (~7–13 min to load)
-MODEL=Qwen3.8-27B-W4A16-AutoRound ./start-vllm.sh   # same, with the INT4 weights (faster; see BENCHMARKS.md)
+./start-vllm.sh           # restart only the model server with INT4 (~9–13 min to load)
+MODEL=Qwen3.8-27B-FP8 ./start-vllm.sh   # same, with the FP8 weights instead
 ./start-webui.sh          # restart only Open WebUI (~30s)
 
 docker ps                 # both containers should be "Up"
@@ -178,15 +181,15 @@ Then run `export OPENAI_API_KEY=<your Open WebUI key>` and `qwen`.
 
 ## Performance (measured on this setup)
 
-Current GPU: **NVIDIA L40**. Test: ~440-token prompt, 300-token reply, thinking off, MTP off. Full results and the RTX A6000 comparison are in [`BENCHMARKS.md`](BENCHMARKS.md).
+Current setup: **NVIDIA L40 with the INT4 weights**. Test: ~440-token prompt, 300-token reply, thinking off, MTP off. Full results, including FP8 and the RTX A6000, are in [`BENCHMARKS.md`](BENCHMARKS.md).
 
 | Users at once | Wait for first word | Speed per user |
 |---|---|---|
-| 1 | 0.3s | 19 tok/s |
-| 4 | 1.1s | 17 tok/s |
-| 8 | 2.0s | 16 tok/s |
-| 16 | 3.1s | 13 tok/s |
-| 24 | 3.9s typical, 28s worst (queued) | 12 tok/s |
+| 1 | 0.3s | 28 tok/s |
+| 4 | 0.9s | 24 tok/s |
+| 8 | 1.6s | 21 tok/s |
+| 16 | 2.5s | 17 tok/s |
+| 24 | 3.1s typical, 22s worst (queued) | 16 tok/s |
 
 - **Comfortable load:** up to ~16 people generating at the same moment. Beyond that, requests queue.
 - **Thinking mode** adds 10–30s before the answer starts.
@@ -197,8 +200,8 @@ Current GPU: **NVIDIA L40**. Test: ~440-token prompt, 300-token reply, thinking 
 | Option | Cost | Effect |
 |---|---|---|
 | MTP speculative decoding | free | **Measured** 2× speed on the A6000 (36 tok/s single user), but **crashes vLLM 0.29.0**. Disabled; see `MEMORY.md`. |
-| INT4 weights (`dbirks/Qwen3.8-27B-W4A16-AutoRound`) | free, 19.5GB download | **Measured on the L40:** +29–47% speed, 2.15× conversation memory (329K tokens). Quality within the margin of error in published evals, not measured here. Run with `MODEL=Qwen3.8-27B-W4A16-AutoRound ./start-vllm.sh` |
-| RTX A6000 (previous GPU) | $0.35/hr (vs $0.79 for the L40) | **Measured:** ~13% slower streaming, 28% more conversation memory, about half the cost per token |
+| FP8 weights (previous default) | free, already on disk | **Measured on the L40:** 22–32% slower than INT4, less than half the conversation memory (153K tokens), slightly closer to the original model's quality. Run with `MODEL=Qwen3.8-27B-FP8 ./start-vllm.sh` |
+| RTX A6000 (previous GPU) | $0.35/hr (vs $0.79 for the L40) | **Measured with FP8:** ~13% slower streaming than the L40, about half the cost per token. INT4 on the A6000 not measured |
 | A100 80GB | $1.09/hr | ~2–2.5× the A6000's speed, ~3.5× its conversation memory |
 | Qwen3.8-Flash-Next (125B MoE) | ~4× A100, ~$4.36/hr | +1–5 points on most benchmarks; unverified on Ampere |
 

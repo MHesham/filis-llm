@@ -3,9 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-for f in .env /home/ubuntu/models/Qwen3.8-27B-FP8/config.json; do
-  [ -e "$f" ] || { echo "Missing $f — see 'Setup from a fresh clone' in README.md"; exit 1; }
-done
+# start-vllm.sh checks that the selected model folder exists.
+[ -e .env ] || { echo "Missing .env — see 'Setup from a fresh clone' in README.md"; exit 1; }
 
 ./start-vllm.sh
 ./start-webui.sh

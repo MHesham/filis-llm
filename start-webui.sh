@@ -11,6 +11,9 @@ PUBLIC_URL="https://${INSTANCE_ID}-3000.thundercompute.net"
 docker rm -f open-webui 2>/dev/null || true
 
 # New sign-ups land as "pending" until an admin approves them.
+# Analytics opt-outs: DO_NOT_TRACK and SCARF_NO_ANALYTICS are read by bundled libraries
+# (huggingface_hub, unstructured). ANONYMIZED_TELEMETRY is not read by the current image; kept in
+# case a future version uses it. See PRIVACY.md.
 docker run -d --name open-webui \
   --restart unless-stopped \
   -v "$PWD/data/open-webui:/app/backend/data" \
@@ -22,6 +25,9 @@ docker run -d --name open-webui \
   -e ENABLE_OLLAMA_API=False \
   -e WEBUI_SECRET_KEY="$WEBUI_SECRET_KEY" \
   -e DEFAULT_USER_ROLE=pending \
+  -e ANONYMIZED_TELEMETRY=False \
+  -e DO_NOT_TRACK=true \
+  -e SCARF_NO_ANALYTICS=true \
   ghcr.io/open-webui/open-webui:main
 
 echo "Open WebUI starting on port 3000; follow with: docker logs -f open-webui"
