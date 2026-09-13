@@ -17,7 +17,7 @@ Self-hosted **Qwen3.8-27B-FP8** served by **vLLM**, with **Open WebUI** as the m
             ▼
  ┌─────────────────────────┐        ┌──────────────────────────────┐
  │ Open WebUI  :3000       │ ─────▶ │ vLLM  127.0.0.1:8000         │
- │ accounts, chats, API    │  key   │ Qwen3.8-27B-FP8 on RTX A6000 │
+ │ accounts, chats, API    │  key   │ Qwen3.8-27B-FP8 on L40       │
  └─────────────────────────┘        └──────────────────────────────┘
 ```
 
@@ -26,7 +26,7 @@ Self-hosted **Qwen3.8-27B-FP8** served by **vLLM**, with **Open WebUI** as the m
 
 | Component | Details |
 |---|---|
-| GPU | 1× NVIDIA RTX A6000, 48GB (Ampere) |
+| GPU | 1× NVIDIA L40, 46GB (Ada Lovelace). Previously RTX A6000; see `BENCHMARKS.md` |
 | Host | Thunder Compute instance, 250GB disk |
 | Model | `Qwen/Qwen3.8-27B-FP8`, 28.9GB on GPU, vision + tools + thinking |
 | Inference server | `vllm/vllm-openai:latest` (v0.29.0) |
@@ -45,6 +45,8 @@ Self-hosted **Qwen3.8-27B-FP8** served by **vLLM**, with **Open WebUI** as the m
 | `.env.example` | Template for `.env`. |
 | `.gitignore` | Keeps secrets, the Open WebUI database, and model weights out of Git. |
 | `MEMORY.md` | Gotchas and lessons learned. Read before changing anything. |
+| `BENCHMARKS.md` | Measured speed, capacity, and cost: RTX A6000 vs L40, FP8 vs INT4. |
+| `benchmarks/loadtest.py` | The load test behind those numbers. |
 
 Local-only (not in Git):
 
@@ -53,13 +55,14 @@ Local-only (not in Git):
 | `.env` | Secrets: `VLLM_API_KEY`, `WEBUI_SECRET_KEY`. Mode 600. **Never commit or share.** |
 | `admin-credentials.txt` | Optional note of the Open WebUI admin login. Mode 600. |
 | `data/open-webui/` | Open WebUI database: users, chats, settings. Back this up. |
-| `/home/ubuntu/models/Qwen3.8-27B-FP8/` | Model weights (28GB). |
+| `/home/ubuntu/models/Qwen3.8-27B-FP8/` | FP8 model weights (28GB), the default. |
+| `/home/ubuntu/models/Qwen3.8-27B-W4A16-AutoRound/` | INT4 model weights (19GB). Select with `MODEL=`. |
 
 ---
 
 ## Setup from a fresh clone
 
-Requirements: a Thunder Compute instance with a 48GB+ NVIDIA GPU and a disk of at least 250GB. Docker images are unpacked in full every time a container starts.
+Requirements: a Thunder Compute instance with a 46GB+ NVIDIA GPU (tested on RTX A6000 and L40) and a disk of at least 250GB. Docker images are unpacked in full every time a container starts.
 
 ```bash
 git clone git@github.com:MHesham/filis-llm.git ~/qwen-platform
@@ -87,7 +90,8 @@ pip install --user -U "huggingface_hub[hf_xet]"
 cd ~/qwen-platform
 
 ./start-all.sh            # start or restart everything and wait until ready
-./start-vllm.sh           # restart only the model server (~7–13 min to load)
+./start-vllm.sh           # restart only the model server with FP8 (~7–13 min to load)
+MODEL=Qwen3.8-27B-W4A16-AutoRound ./start-vllm.sh   # same, with the INT4 weights (faster; see BENCHMARKS.md)
 ./start-webui.sh          # restart only Open WebUI (~30s)
 
 docker ps                 # both containers should be "Up"
@@ -174,15 +178,15 @@ Then run `export OPENAI_API_KEY=<your Open WebUI key>` and `qwen`.
 
 ## Performance (measured on this setup)
 
-Test: ~440-token prompt, 300-token reply, thinking off, MTP **off** (current configuration).
+Current GPU: **NVIDIA L40**. Test: ~440-token prompt, 300-token reply, thinking off, MTP off. Full results and the RTX A6000 comparison are in [`BENCHMARKS.md`](BENCHMARKS.md).
 
 | Users at once | Wait for first word | Speed per user |
 |---|---|---|
-| 1 | 0.4s | 16 tok/s |
-| 4 | 1.4s | 15 tok/s |
-| 8 | 2.5s | 14 tok/s |
-| 16 | 4.0s | 11.5 tok/s |
-| 24 | 5s typical, 32s worst (queued) | 11 tok/s |
+| 1 | 0.3s | 19 tok/s |
+| 4 | 1.1s | 17 tok/s |
+| 8 | 2.0s | 16 tok/s |
+| 16 | 3.1s | 13 tok/s |
+| 24 | 3.9s typical, 28s worst (queued) | 12 tok/s |
 
 - **Comfortable load:** up to ~16 people generating at the same moment. Beyond that, requests queue.
 - **Thinking mode** adds 10–30s before the answer starts.
@@ -192,10 +196,10 @@ Test: ~440-token prompt, 300-token reply, thinking off, MTP **off** (current con
 
 | Option | Cost | Effect |
 |---|---|---|
-| MTP speculative decoding | free | **Measured** 2× speed (36 tok/s single user), but **crashes vLLM 0.29.0**. Disabled; see `MEMORY.md`. |
-| INT4 weights (`dbirks/Qwen3.8-27B-W4A16-AutoRound`) | free, 19.5GB download | ~1.3–1.5× speed, ~2× conversation memory, ~1 point quality loss |
-| A100 80GB | $1.09/hr (vs $0.35) | ~2–2.5× speed, ~3.5× conversation memory |
-| L40 | $0.79/hr | ~+12% speed. Not worth it. |
+| MTP speculative decoding | free | **Measured** 2× speed on the A6000 (36 tok/s single user), but **crashes vLLM 0.29.0**. Disabled; see `MEMORY.md`. |
+| INT4 weights (`dbirks/Qwen3.8-27B-W4A16-AutoRound`) | free, 19.5GB download | **Measured on the L40:** +29–47% speed, 2.15× conversation memory (329K tokens). Quality within the margin of error in published evals, not measured here. Run with `MODEL=Qwen3.8-27B-W4A16-AutoRound ./start-vllm.sh` |
+| RTX A6000 (previous GPU) | $0.35/hr (vs $0.79 for the L40) | **Measured:** ~13% slower streaming, 28% more conversation memory, about half the cost per token |
+| A100 80GB | $1.09/hr | ~2–2.5× the A6000's speed, ~3.5× its conversation memory |
 | Qwen3.8-Flash-Next (125B MoE) | ~4× A100, ~$4.36/hr | +1–5 points on most benchmarks; unverified on Ampere |
 
 ---

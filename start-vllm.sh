@@ -3,6 +3,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source .env
 
+# Model folder under /home/ubuntu/models, e.g. MODEL=Qwen3.8-27B-W4A16-AutoRound ./start-vllm.sh
+MODEL="${MODEL:-Qwen3.8-27B-FP8}"
+[ -e "/home/ubuntu/models/$MODEL/config.json" ] || { echo "Model not found: /home/ubuntu/models/$MODEL"; exit 1; }
+
 docker rm -f vllm 2>/dev/null || true
 
 # Thunder Compute: GPUs via --device, not --gpus; container network is shared with the host.
@@ -14,7 +18,7 @@ docker run -d --name vllm \
   -e TRITON_LIBCUDA_PATH=/usr/lib/x86_64-linux-gnu \
   -v /home/ubuntu/models:/models:ro \
   vllm/vllm-openai:latest \
-  --model /models/Qwen3.8-27B-FP8 \
+  --model "/models/$MODEL" \
   --served-model-name qwen3.8-27b \
   --host 127.0.0.1 --port 8000 \
   --api-key "$VLLM_API_KEY" \

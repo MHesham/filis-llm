@@ -41,7 +41,7 @@ A pasted list of fixes turned out to be mostly false when checked against the so
 - **Container networking isn't isolated.** Every container shares the host network, so `-p` is meaningless and ports can collide. That's why vLLM binds `127.0.0.1` explicitly.
 - **Images unpack completely on every container start**, so you need free disk about the size of the image (~21GB for vLLM). The first launch failed with `disk quota exceeded` on the original 100GB disk. Resized to 250GB.
 - **Triton can't find the CUDA library in containers**, so vLLM crashes with `libcuda.so cannot found`. Fix: `-e TRITON_LIBCUDA_PATH=/usr/lib/x86_64-linux-gnu` (already in `start-vllm.sh`).
-- **`/etc/thunder/config.json` says `gpuType: "T4"`** but the GPU is an RTX A6000. Trust `nvidia-smi`, not that field. Its `deviceId` is reliable and is the ID in the public URL.
+- **Don't trust `gpuType` in `/etc/thunder/config.json`.** It said `"T4"` on the RTX A6000 instance; after the L40 swap it correctly said `"L40"`. Check with `nvidia-smi`. The `deviceId` field has been reliable and is the ID in the public URL.
 - **Disk usage:** `du -x /` doesn't count the base image layers, so `df` showed 82GB used while `du` found ~10MB. It's overlayfs; reclaim space by resizing the disk, not by deleting files.
 - **Forwarded ports have no login of their own.** The first person to sign up on a fresh Open WebUI becomes admin, so claim the admin account *before* the URL is shared.
 - **No stop/start:** snapshot → delete → create new instance from snapshot. The new instance has a **new ID and URL**.
@@ -52,10 +52,16 @@ A pasted list of fixes turned out to be mostly false when checked against the so
 ## 3. vLLM and model gotchas
 
 - **Needs vLLM ≥ 0.17** for the Qwen3.5-series architecture Qwen3.8 uses. Tested on 0.29.0.
-- **FP8 on Ampere (A6000/A100) is weight-only (Marlin fallback).** It works, but it's slower than on Ada or Blackwell. The warning at startup is expected.
+- **Qwen's FP8 checkpoint runs weight-only (Marlin fallback) on both Ampere and Ada.**
+  - It's block-wise FP8 (128×128 blocks). vLLM 0.29.0 has no native block-FP8 kernel below compute capability 9.0: on the L40, `cutlass_fp8_supported()` is True but `cutlass_block_fp8_supported()` is False.
+  - So the L40's FP8 hardware goes unused, and the "Your GPU does not have native support for FP8" warning is misleading there.
+  - Native FP8 on Ada would need a per-channel or per-tensor FP8 checkpoint (untested).
+  - Measured result: the L40 is only ~15% faster than the A6000 (see `BENCHMARKS.md`).
 - **Harmless startup noise:** a `deep_ep ... libnccl.so.2 FileNotFoundError` traceback inside a WARNING. It's an optional multi-GPU library. **Don't treat log tracebacks as failures.**
 - **"Up N seconds" with empty logs and ~0 GPU memory is normal.** Startup is: unpack image → load weights (~1.5 min) → compile and capture CUDA graphs (~5 min). First start took 11–13 min; after a restore it took ~7.5 min.
-- **Conversation memory varies between boots with identical settings:** 196,608 tokens, then 152,917 after the restore. Check the `GPU KV cache size` log line after each start instead of assuming.
+- **Conversation memory depends on the GPU's usable VRAM:** 196,608 tokens on the RTX A6000 (48GB), 152,917 on the L40 (46GB), with identical settings.
+  - This was first misread as random variation between restarts. The 2026-09-13 "restore" was actually the GPU swap.
+  - Run `nvidia-smi` before explaining a change in capacity, and read the `GPU KV cache size` log line after each start.
 - **Thinking mode is on by default at `xhigh` effort.** It's great for quality, but answers start 10–30s late. `reasoning_effort` and `enable_thinking` control it per request.
 - **Tool calling works** with `--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3`. It's verified on `/v1/chat/completions`, `/v1/messages` (Anthropic format), and through Open WebUI's `/api/chat/completions`, including streamed calls.
 
@@ -81,5 +87,9 @@ A pasted list of fixes turned out to be mostly false when checked against the so
   - Another gave Qwen's Artificial Analysis Intelligence Index as 52, while the primary page says 34.
   - Always open the primary source: model card, official docs, GitHub thread.
 - **Benchmarks in model cards are vendor-reported.** Qwen compares against "Opus 4.6 **Max**". There are no published non-Max Opus 4.6 numbers; Artificial Analysis puts it between 26 (no thinking) and 32 (Max).
-- **Label estimates as estimates.** INT4, A100, and L40 speed numbers in the README come from memory-bandwidth math, not measurements. MTP, FP8 baseline, and concurrency numbers were measured.
+- **Label estimates as estimates.**
+  - The L40 was estimated at ~+12% from memory bandwidth and measured at +14–17%, so that method roughly holds.
+  - INT4 was estimated at ~1.3–1.5× and measured at 1.29–1.47× on the L40.
+  - A100 numbers in the README are still estimates. INT4 *quality* has not been measured on this server.
+  - MTP, both GPU baselines, INT4 speed, and the concurrency numbers were measured.
 - **Check the whole path before exposing anything.** Port 3000 was already publicly forwarded before setup finished; checking `https://<id>-3000.thundercompute.net` caught it in time to claim the admin account.
