@@ -145,8 +145,12 @@ ssh -L 8000:127.0.0.1:8000 <instance>     # from your laptop, if not on the inst
 
 ### Qwen Code (Qwen's terminal coding agent)
 
+Node.js isn't preinstalled on this instance. Install Node 22+, then Qwen Code:
+
 ```bash
-npm install -g @qwen-code/qwen-code@latest    # Node.js 22+
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+npm install -g @qwen-code/qwen-code@latest
 ```
 
 `~/.qwen/settings.json`:
@@ -248,7 +252,21 @@ sudo apt-get update && sudo apt-get install -y cloudflared
 source .env && sudo cloudflared service install "$CLOUDFLARE_TUNNEL_TOKEN"
 
 # Then, same as vLLM/Open WebUI:
-./start-webui.sh   # picks up PUBLIC_DOMAIN for WEBUI_URL/CORS_ALLOW_ORIGIN
+./start-webui.sh   # picks up PUBLIC_DOMAIN for CORS_ALLOW_ORIGIN
+```
+
+`WEBUI_URL` is a different story: once Open WebUI's database exists, it's a DB-persisted
+admin setting, not something `start-webui.sh`'s env var can change on a rerun (verified
+2026-09-13 — see `MEMORY.md`). Fix it once after switching domains via **Admin Panel →
+Settings → General → WebUI URL**, or the API:
+```bash
+TOKEN=$(curl -s -X POST http://127.0.0.1:3000/api/v1/auths/signin \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"<admin email>","password":"<admin password>"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+curl -s http://127.0.0.1:3000/api/v1/auths/admin/config -H "Authorization: Bearer $TOKEN" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); d['WEBUI_URL']='https://$PUBLIC_DOMAIN'; print(json.dumps(d))" \
+  | curl -s -X POST http://127.0.0.1:3000/api/v1/auths/admin/config \
+      -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data @-
 ```
 
 `start-cloudflared.sh` (called automatically by `start-all.sh` when
