@@ -44,6 +44,10 @@ A pasted list of fixes turned out to be mostly false when checked against the so
 - **Don't trust `gpuType` in `/etc/thunder/config.json`.** It said `"T4"` on the RTX A6000 instance; after the L40 swap it correctly said `"L40"`. Check with `nvidia-smi`. The `deviceId` field has been reliable and is the ID in the public URL.
 - **Disk usage:** `du -x /` doesn't count the base image layers, so `df` showed 82GB used while `du` found ~10MB. It's overlayfs; reclaim space by resizing the disk, not by deleting files.
 - **Forwarded ports have no login of their own.** The first person to sign up on a fresh Open WebUI becomes admin, so claim the admin account *before* the URL is shared.
+- **Open WebUI settings live in its database, not the script.** After the first start, admin-panel values override the `-e` settings in `start-webui.sh`.
+  - On 2026-09-13, sign-up turned out to be **off** even though the docs assumed "anyone can sign up, new accounts pending". It was turned on through the admin API.
+  - Check the real values with `GET /api/v1/auths/admin/config` (as admin) before describing how accounts work.
+  - To prove approval is enforced, sign up a throwaway account: it should be `pending`, get 401 on `/api/models` and `/api/chat/completions`, and then be deleted.
 - **No stop/start:** snapshot → delete → create new instance from snapshot. The new instance has a **new ID and URL**.
 - **After a restore, containers come back automatically but keep their old settings** (Open WebUI still had the old `WEBUI_URL`). Rerun `./start-webui.sh`. Port forwarding survived the 2026-09-13 restore.
 
