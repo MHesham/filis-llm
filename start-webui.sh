@@ -16,10 +16,14 @@ fi
 
 docker rm -f open-webui 2>/dev/null || true
 
+# Shown to every user in-app (Open WebUI's built-in banner feature). Keep this in
+# sync with PRIVACY.md's "What we don't guarantee" section — this is that text.
+WEBUI_BANNERS_JSON='[{"id":"privacy-notice","type":"info","title":"A note on privacy","content":"This service runs on infrastructure we control — chats are never sent to a third-party AI provider or used to train outside models. That said, as the operator we can technically access stored chat data (the database is not encrypted at rest), independent of any in-app privacy setting. Please do not share anything here you would not want a system administrator to see.","dismissible":true,"timestamp":1789427352}]'
+
 # New sign-ups land as "pending" until an admin approves them.
 # Analytics opt-outs: DO_NOT_TRACK and SCARF_NO_ANALYTICS are read by bundled libraries
 # (huggingface_hub, unstructured). ANONYMIZED_TELEMETRY is not read by the current image; kept in
-# case a future version uses it. See PRIVACY.md.
+# case a future version uses it. See PRIVACY-INTERNAL.md (untracked, not in git).
 docker run -d --name open-webui \
   --restart unless-stopped \
   -v "$PWD/data/open-webui:/app/backend/data" \
@@ -31,6 +35,7 @@ docker run -d --name open-webui \
   -e ENABLE_OLLAMA_API=False \
   -e WEBUI_SECRET_KEY="$WEBUI_SECRET_KEY" \
   -e DEFAULT_USER_ROLE=pending \
+  -e WEBUI_BANNERS="$WEBUI_BANNERS_JSON" \
   -e ENABLE_ADMIN_CHAT_ACCESS=False \
   -e ENABLE_ADMIN_EXPORT=False \
   -e ANONYMIZED_TELEMETRY=False \

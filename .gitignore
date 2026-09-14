@@ -2,6 +2,10 @@
 .env
 admin-credentials.txt
 
+# Internal security/privacy audit — file paths, permissions, bypass mechanisms.
+# Publishing this is a roadmap for unauthorized access. See its own header.
+PRIVACY-INTERNAL.md
+
 # Open WebUI database (users, chats)
 data/
 

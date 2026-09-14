@@ -1,0 +1,14 @@
+name = "chat-filis-dev-status"
+main = "src/index.js"
+compatibility_date = "2026-09-14"
+
+# Worker takes over the public domain; requests it can't proxy successfully
+# fall back to the banner page baked into src/index.js.
+[[routes]]
+pattern = "chat.filis.dev"
+custom_domain = true
+
+[vars]
+# Internal-only hostname the tunnel's Public Hostname should point to
+# instead of chat.filis.dev (see ../README.md "Downtime banner" section).
+ORIGIN_HOSTNAME = "origin.filis.dev"

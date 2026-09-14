@@ -56,7 +56,7 @@ A pasted list of fixes turned out to be mostly false when checked against the so
 - **Database encryption isn't practical here (checked 2026-09-14).**
   - Open WebUI has a SQLCipher mode (`DATABASE_TYPE=sqlite+sqlcipher` + `DATABASE_PASSWORD`), but `sqlcipher3` isn't in the official image, there's no migration of an existing database, and open-webui#20051 reports errors after login.
   - LUKS/gocryptfs can't run in this container: no block devices, no `/dev/mapper/control`, no `/dev/fuse`.
-  - See `PRIVACY.md`, "Encryption at rest".
+  - See `PRIVACY-INTERNAL.md` (untracked, not in git), "Encryption at rest".
 - **No stop/start:** snapshot → delete → create new instance from snapshot. The new instance has a **new ID and URL**.
 - **After a restore, containers come back automatically but keep their old settings.** `docker`-level env vars (like `OPENAI_API_BASE_URL`) do get picked up by rerunning `./start-webui.sh`; DB-persisted settings (like `WEBUI_URL`) don't — see above. Port forwarding survived the 2026-09-13 restore.
 - **No Docker image for `cloudflare/cloudflared` works here.** Every tag fails with `proot warning: can't sanitize binding ".../fastvfs/materialized/...": Permission denied` — reproduced with `--privileged` too, and on a bare `--version` invocation, so it's the image under this instance's `fastvfs`/`proot`-based container runtime, not a flag. There's also no systemd (`system has not been booted with systemd as init system`). Working setup: install the native `cloudflared` apt package, `sudo cloudflared service install <token>` (falls back to a SysV `/etc/init.d` script), then manage it with `sudo service cloudflared start/status`, not `systemctl`.

@@ -300,8 +300,39 @@ After a reboot or restore, confirm the tunnel came back:
 (200 = up; 530 = tunnel down).
 
 Once this is live, note that Cloudflare's edge — not just Thunder Compute's — sits in
-the plaintext path (it terminates TLS to route the request); see `PRIVACY.md` if
-you're maintaining privacy claims about this deployment.
+the plaintext path (it terminates TLS to route the request); see `PRIVACY-INTERNAL.md`
+(untracked, not in git — ask the operator) if you're maintaining privacy claims about
+this deployment.
+
+---
+
+## Downtime banner (when the GPU instance is down)
+
+`status-worker/` is a Cloudflare Worker that takes over `$PUBLIC_DOMAIN` and proxies
+to Open WebUI; if the origin is unreachable, times out, or the tunnel is down
+(521/522/523/530), it serves a self-contained "service temporarily unavailable" page
+instead of Cloudflare's raw error page. It auto-retries (meta refresh) every 20s.
+
+One-time setup (dashboard):
+
+1. **Zero Trust > Networks > Tunnels** > your tunnel > **Public Hostname** tab. Edit
+   the existing hostname entry and rename it from `chat.filis.dev` to
+   `origin.filis.dev` (service stays `HTTP` → `localhost:3000`). This frees
+   `chat.filis.dev` for the Worker and keeps the tunnel reachable at the internal
+   name `status-worker/wrangler.toml` expects (`ORIGIN_HOSTNAME`).
+2. Deploy the Worker (creates the Custom Domain + DNS record for you):
+   ```
+   cd status-worker
+   npx wrangler login   # one-time, opens a browser
+   npx wrangler deploy
+   ```
+3. Confirm: `curl -s -o /dev/null -w '%{http_code}\n' https://$PUBLIC_DOMAIN` while
+   Open WebUI is up (200), then stop it (`docker stop open-webui`) and check again —
+   should now show the banner instead of Cloudflare's error page. Restart with
+   `docker start open-webui`.
+
+If `ORIGIN_HOSTNAME` in `wrangler.toml` ever needs to change (different domain),
+update it there and redeploy.
 
 ---
 
@@ -334,7 +365,7 @@ After the restore:
 - [x] Secrets in `.env` and `admin-credentials.txt`, mode 600
 - [x] Admins can't read or export other users' chats in Open WebUI (`ENABLE_ADMIN_CHAT_ACCESS=False`, `ENABLE_ADMIN_EXPORT=False`)
 - [x] Community sharing off; pending users can't see the admin's details
-- [ ] Limit who has SSH/`sudo`: the server operator can still read the unencrypted database directly (see `PRIVACY.md`)
+- [ ] Limit who has SSH/`sudo`: the server operator can still read the unencrypted database directly (see `PRIVACY-INTERNAL.md`, untracked — ask the operator)
 - [ ] Change the admin password from the generated one
 - [ ] Enable Open WebUI API keys only if users need programmatic access
 - [ ] Back up `data/open-webui/` before risky changes
