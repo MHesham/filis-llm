@@ -31,6 +31,8 @@ docker run -d --name open-webui \
   -e ENABLE_OLLAMA_API=False \
   -e WEBUI_SECRET_KEY="$WEBUI_SECRET_KEY" \
   -e DEFAULT_USER_ROLE=pending \
+  -e ENABLE_ADMIN_CHAT_ACCESS=False \
+  -e ENABLE_ADMIN_EXPORT=False \
   -e ANONYMIZED_TELEMETRY=False \
   -e DO_NOT_TRACK=true \
   -e SCARF_NO_ANALYTICS=true \

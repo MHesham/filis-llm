@@ -17,7 +17,7 @@ Self-hosted **Qwen3.8-27B** (INT4 weights by default, FP8 available) served by *
             ▼
  ┌─────────────────────────┐        ┌──────────────────────────────┐
  │ Open WebUI  :3000       │ ─────▶ │ vLLM  127.0.0.1:8000         │
- │ accounts, chats, API    │  key   │ Qwen3.8-27B INT4 on L40      │
+ │ accounts, chats, API    │  key   │ Qwen3.8-27B INT4 on A6000    │
  └─────────────────────────┘        └──────────────────────────────┘
 ```
 
@@ -26,13 +26,13 @@ Self-hosted **Qwen3.8-27B** (INT4 weights by default, FP8 available) served by *
 
 | Component | Details |
 |---|---|
-| GPU | 1× NVIDIA L40, 46GB (Ada Lovelace). Previously RTX A6000; see `BENCHMARKS.md` |
+| GPU | 1× NVIDIA RTX A6000, 48GB (Ampere). Has also run on an L40; both are compared in `BENCHMARKS.md` |
 | Host | Thunder Compute instance, 250GB disk |
 | Model (default) | `dbirks/Qwen3.8-27B-W4A16-AutoRound`, INT4 weights, 17.7GB on GPU, vision + tools + thinking |
 | Model (fallback) | `Qwen/Qwen3.8-27B-FP8`, 28.9GB on GPU; slower on this GPU but slightly closer to the original model |
 | Inference server | `vllm/vllm-openai:latest` (v0.29.0) |
 | Chat UI | `ghcr.io/open-webui/open-webui:main` (v0.11.3 at setup) |
-| Context window | 131,072 tokens per request; ~329K tokens of conversation memory shared across users (INT4 on the L40) |
+| Context window | 131,072 tokens per request; ~372K tokens of conversation memory shared across users (INT4 on the A6000) |
 
 ---
 
@@ -187,15 +187,15 @@ Then run `export OPENAI_API_KEY=<your Open WebUI key>` and `qwen`.
 
 ## Performance (measured on this setup)
 
-Current setup: **NVIDIA L40 with the INT4 weights**. Test: ~440-token prompt, 300-token reply, thinking off, MTP off. Full results, including FP8 and the RTX A6000, are in [`BENCHMARKS.md`](BENCHMARKS.md).
+Current setup: **RTX A6000 with the INT4 weights**. Test: ~440-token prompt, 300-token reply, thinking off, MTP off. Full results, including FP8 and the L40, are in [`BENCHMARKS.md`](BENCHMARKS.md).
 
 | Users at once | Wait for first word | Speed per user |
 |---|---|---|
-| 1 | 0.3s | 28 tok/s |
-| 4 | 0.9s | 24 tok/s |
-| 8 | 1.6s | 21 tok/s |
-| 16 | 2.5s | 17 tok/s |
-| 24 | 3.1s typical, 22s worst (queued) | 16 tok/s |
+| 1 | 0.4s | 21 tok/s |
+| 4 | 1.2s | 19 tok/s |
+| 8 | 2.1s | 18 tok/s |
+| 16 | 3.3s | 13 tok/s |
+| 24 | 4.0s typical, 28s worst (queued) | 13 tok/s |
 
 - **Comfortable load:** up to ~16 people generating at the same moment. Beyond that, requests queue.
 - **Thinking mode** adds 10–30s before the answer starts.
@@ -206,8 +206,8 @@ Current setup: **NVIDIA L40 with the INT4 weights**. Test: ~440-token prompt, 30
 | Option | Cost | Effect |
 |---|---|---|
 | MTP speculative decoding | free | **Measured** 2× speed on the A6000 (36 tok/s single user), but **crashes vLLM 0.29.0**. Disabled; see `MEMORY.md`. |
-| FP8 weights (previous default) | free, already on disk | **Measured on the L40:** 22–32% slower than INT4, less than half the conversation memory (153K tokens), slightly closer to the original model's quality. Run with `MODEL=Qwen3.8-27B-FP8 ./start-vllm.sh` |
-| RTX A6000 (previous GPU) | $0.35/hr (vs $0.79 for the L40) | **Measured with FP8:** ~13% slower streaming than the L40, about half the cost per token. INT4 on the A6000 not measured |
+| FP8 weights (previous default) | free, already on disk | **Measured on the A6000:** 13–23% slower than INT4, about half the conversation memory (197K tokens), slightly closer to the original model's quality. Run with `MODEL=Qwen3.8-27B-FP8 ./start-vllm.sh` |
+| L40 (previous GPU) | $0.79/hr (vs $0.35 for the A6000) | **Measured with INT4:** 20–33% faster streaming, 12% less conversation memory (329K tokens), ~1.8× the cost per token |
 | A100 80GB | $1.09/hr | ~2–2.5× the A6000's speed, ~3.5× its conversation memory |
 | Qwen3.8-Flash-Next (125B MoE) | ~4× A100, ~$4.36/hr | +1–5 points on most benchmarks; unverified on Ampere |
 
@@ -332,6 +332,9 @@ After the restore:
 - [x] Open WebUI admin account claimed before exposure (the first sign-up becomes admin)
 - [x] New sign-ups require approval (`DEFAULT_USER_ROLE=pending`)
 - [x] Secrets in `.env` and `admin-credentials.txt`, mode 600
+- [x] Admins can't read or export other users' chats in Open WebUI (`ENABLE_ADMIN_CHAT_ACCESS=False`, `ENABLE_ADMIN_EXPORT=False`)
+- [x] Community sharing off; pending users can't see the admin's details
+- [ ] Limit who has SSH/`sudo`: the server operator can still read the unencrypted database directly (see `PRIVACY.md`)
 - [ ] Change the admin password from the generated one
 - [ ] Enable Open WebUI API keys only if users need programmatic access
 - [ ] Back up `data/open-webui/` before risky changes

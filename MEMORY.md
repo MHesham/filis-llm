@@ -49,6 +49,14 @@ A pasted list of fixes turned out to be mostly false when checked against the so
   - **Corrected 2026-09-13:** an earlier version of this note said rerunning `./start-webui.sh` fixes a stale `WEBUI_URL` after a URL change. Verified false: after switching to a `PUBLIC_DOMAIN` (Cloudflare Tunnel) and rerunning `./start-webui.sh`, `GET /api/v1/auths/admin/config` still showed the old URL. Fixed it by `POST`ing the corrected `WEBUI_URL` to that same endpoint. Same applies to `ENABLE_API_KEYS` and any other `auth.*`/admin-config setting — check the live value with `GET`, don't assume a script rerun took effect.
   - Check the real values with `GET /api/v1/auths/admin/config` (as admin) before describing how accounts work.
   - To prove approval is enforced, sign up a throwaway account: it should be `pending`, get 401 on `/api/models` and `/api/chat/completions`, and then be deleted.
+- **Exception: `ENABLE_ADMIN_CHAT_ACCESS` and `ENABLE_ADMIN_EXPORT` are read at startup** (plain environment variables in `env.py` / `config.py`, both default True), not stored in the database. Setting them in `start-webui.sh` and rerunning it does take effect.
+  - Set to False on 2026-09-14. Verified as admin: listing another user's chats, `GET /api/v1/chats/all/db`, and `GET /api/v1/utils/db/download` all return 401.
+  - When testing, print only status codes and counts, never other users' chat titles.
+  - This doesn't stop anyone with `sudo` from reading `data/open-webui/webui.db` directly (plain SQLite).
+- **Database encryption isn't practical here (checked 2026-09-14).**
+  - Open WebUI has a SQLCipher mode (`DATABASE_TYPE=sqlite+sqlcipher` + `DATABASE_PASSWORD`), but `sqlcipher3` isn't in the official image, there's no migration of an existing database, and open-webui#20051 reports errors after login.
+  - LUKS/gocryptfs can't run in this container: no block devices, no `/dev/mapper/control`, no `/dev/fuse`.
+  - See `PRIVACY.md`, "Encryption at rest".
 - **No stop/start:** snapshot → delete → create new instance from snapshot. The new instance has a **new ID and URL**.
 - **After a restore, containers come back automatically but keep their old settings.** `docker`-level env vars (like `OPENAI_API_BASE_URL`) do get picked up by rerunning `./start-webui.sh`; DB-persisted settings (like `WEBUI_URL`) don't — see above. Port forwarding survived the 2026-09-13 restore.
 - **No Docker image for `cloudflare/cloudflared` works here.** Every tag fails with `proot warning: can't sanitize binding ".../fastvfs/materialized/...": Permission denied` — reproduced with `--privileged` too, and on a bare `--version` invocation, so it's the image under this instance's `fastvfs`/`proot`-based container runtime, not a flag. There's also no systemd (`system has not been booted with systemd as init system`). Working setup: install the native `cloudflared` apt package, `sudo cloudflared service install <token>` (falls back to a SysV `/etc/init.d` script), then manage it with `sudo service cloudflared start/status`, not `systemctl`.
@@ -72,7 +80,12 @@ A pasted list of fixes turned out to be mostly false when checked against the so
   - Measured result: the L40 is only ~15% faster than the A6000 (see `BENCHMARKS.md`).
 - **Harmless startup noise:** a `deep_ep ... libnccl.so.2 FileNotFoundError` traceback inside a WARNING. It's an optional multi-GPU library. **Don't treat log tracebacks as failures.**
 - **"Up N seconds" with empty logs and ~0 GPU memory is normal.** Startup is: unpack image → load weights (~1.5 min) → compile and capture CUDA graphs (~5 min). First start took 11–13 min; after a restore it took ~7.5 min.
-- **Conversation memory depends on the GPU's usable VRAM:** 196,608 tokens on the RTX A6000 (48GB), 152,917 on the L40 (46GB), with identical settings.
+- **Conversation memory depends on the GPU's usable VRAM and the weight size**, with identical vLLM settings:
+
+  | | RTX A6000 (48GB) | L40 (46GB) |
+  |---|---|---|
+  | FP8 weights | 196,608 tokens | 152,917 tokens |
+  | INT4 weights | 372,123 tokens | 329,186 tokens |
   - This was first misread as random variation between restarts. The 2026-09-13 "restore" was actually the GPU swap.
   - Run `nvidia-smi` before explaining a change in capacity, and read the `GPU KV cache size` log line after each start.
 - **Thinking mode is on by default at `xhigh` effort.** It's great for quality, but answers start 10–30s late. `reasoning_effort` and `enable_thinking` control it per request.
@@ -103,6 +116,7 @@ A pasted list of fixes turned out to be mostly false when checked against the so
 - **Label estimates as estimates.**
   - The L40 was estimated at ~+12% from memory bandwidth and measured at +14–17%, so that method roughly holds.
   - INT4 was estimated at ~1.3–1.5× and measured at 1.29–1.47× on the L40.
+  - INT4 on the A6000 was predicted to be the cheapest per token, and measured at ~$0.46 per million output tokens (2026-09-14), below A6000 FP8's ~$0.53. But INT4's speedup there was smaller (+15–30%) than on the L40, so don't reuse one GPU's gain for another.
   - A100 numbers in the README are still estimates. INT4 *quality* has not been measured on this server.
   - MTP, both GPU baselines, INT4 speed, and the concurrency numbers were measured.
 - **Check the whole path before exposing anything.** Port 3000 was already publicly forwarded before setup finished; checking `https://<id>-3000.thundercompute.net` caught it in time to claim the admin account.
