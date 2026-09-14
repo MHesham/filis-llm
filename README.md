@@ -221,13 +221,19 @@ connection to Cloudflare's edge, so this needs no inbound port-forwarding, and i
 keeps working across snapshot restores since the tunnel's identity lives in a token
 file on disk, not in the instance's changing device ID.
 
-> **Runs as a native package + SysV service, not Docker.** This instance's container
+> **Runs as a native package supervised by s6, not Docker.** This instance's container
 > runtime (`fastvfs` storage driver, via `proot`) fails to materialize the
 > `cloudflare/cloudflared` image (`proot warning: can't sanitize binding ...:
 > Permission denied`) — reproduced across multiple image tags, so it's a platform
 > limitation, not a bad flag. There's also no systemd here (`system has not been
 > booted with systemd as init system`), so `cloudflared service install` falls back
 > to a classic `/etc/init.d` script, managed with `service`, not `systemctl`.
+>
+> **That init.d script never runs at boot.** Process 1 on this instance is
+> **s6-overlay**, which only starts services defined in `/etc/s6-overlay/s6-rc.d/`.
+> Before 2026-09-14 the tunnel stayed down after every reboot or snapshot restore
+> (Cloudflare returned 530). It's now registered as an s6 service there, so s6 starts
+> and supervises it at boot — see the registration step below.
 
 Dashboard setup (your domain must already be on Cloudflare):
 
@@ -251,6 +257,18 @@ echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudf
 sudo apt-get update && sudo apt-get install -y cloudflared
 source .env && sudo cloudflared service install "$CLOUDFLARE_TUNNEL_TOKEN"
 
+# One-time: register the tunnel with s6 (this instance's init) so it starts at every boot.
+# A malformed entry here can stop dockerd/sshd from starting at boot — validate it with
+# s6-rc-compile before rebooting (see MEMORY.md, "Nothing runs /etc/init.d scripts at boot").
+S=/etc/s6-overlay/s6-rc.d
+sudo mkdir -p $S/cloudflared/dependencies.d
+echo longrun | sudo tee $S/cloudflared/type >/dev/null
+sudo touch $S/cloudflared/dependencies.d/base $S/user/contents.d/cloudflared
+printf '#!/bin/sh\nexec /usr/bin/cloudflared --no-autoupdate tunnel run --token-file /etc/cloudflared/token\n' \
+  | sudo tee $S/cloudflared/run >/dev/null
+sudo chmod 755 $S/cloudflared/run
+sudo service cloudflared start   # runs it now; s6 takes over from the next boot
+
 # Then, same as vLLM/Open WebUI:
 ./start-webui.sh   # picks up PUBLIC_DOMAIN for CORS_ALLOW_ORIGIN
 ```
@@ -270,10 +288,16 @@ curl -s http://127.0.0.1:3000/api/v1/auths/admin/config -H "Authorization: Beare
 ```
 
 `start-cloudflared.sh` (called automatically by `start-all.sh` when
-`CLOUDFLARE_TUNNEL_TOKEN` is set) just runs `sudo service cloudflared start` — the
-one-time `apt-get install` + `service install` above only needs to happen once per
-instance, since the package and `/etc/cloudflared/token` persist on disk across
-reboots and snapshot restores.
+`CLOUDFLARE_TUNNEL_TOKEN` is set) starts the tunnel through s6 once s6 supervises it
+(after the first reboot following registration), and falls back to
+`sudo service cloudflared start` before that. The one-time install, `service install`,
+and s6 registration above only need to happen once per instance: the package,
+`/etc/cloudflared/token`, and `/etc/s6-overlay/s6-rc.d/cloudflared` all persist on disk
+across reboots and snapshot restores.
+
+After a reboot or restore, confirm the tunnel came back:
+`ls /run/service/cloudflared && curl -s -o /dev/null -w '%{http_code}\n' https://$PUBLIC_DOMAIN`
+(200 = up; 530 = tunnel down).
 
 Once this is live, note that Cloudflare's edge — not just Thunder Compute's — sits in
 the plaintext path (it terminates TLS to route the request); see `PRIVACY.md` if
